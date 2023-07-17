@@ -172,7 +172,7 @@ namespace AsepriteImporter.Importers
 
             SpriteAtlasBuilder atlasBuilder = new SpriteAtlasBuilder(AsepriteFile.Header.Width, AsepriteFile.Header.Height);
 
-            Texture2D[] frames = AsepriteFile.GetFrames();
+            Texture2D[] frames = AsepriteFile.GetFrames()[""];
 
             atlas = atlasBuilder.GenerateAtlas(frames, out var importData, false);
 

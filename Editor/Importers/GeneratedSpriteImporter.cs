@@ -15,14 +15,15 @@ namespace AsepriteImporter.Importers {
     public class GeneratedSpriteImporter : SpriteImporter {
         private int padding = 1;
         private Vector2Int size;
-        private string fileName;
-        private string directoryName;
-        private string filePath;
-        private int updateLimit;
         private int rows;
         private int cols;
-        private Texture2D []frames;
-
+        private string fileName;
+        private string directoryName;
+		private string basePath;
+        private string filePath;
+		private Dictionary<string, Texture2D[]> frameLayers = new();
+		private Texture2D[] MainTexFrames => frameLayers[""];
+		private List<SecondarySpriteTexture> secondaryAtlases = new();
 
         public GeneratedSpriteImporter(AseFileImporter importer) : base(importer)
         {
@@ -32,8 +33,27 @@ namespace AsepriteImporter.Importers {
         {
             size = new Vector2Int(AsepriteFile.Header.Width, AsepriteFile.Header.Height);
 
-            frames = AsepriteFile.GetFrames();
-            BuildAtlas(AssetPath);
+            frameLayers = AsepriteFile.GetFrames();
+
+			fileName = Path.GetFileNameWithoutExtension(AssetPath);
+			directoryName = Path.GetDirectoryName(AssetPath) + "/" + fileName;
+			if (!AssetDatabase.IsValidFolder(directoryName))
+			{
+				AssetDatabase.CreateFolder(Path.GetDirectoryName(AssetPath), fileName);
+			}
+			basePath = directoryName + "/" + fileName;
+			filePath = basePath + ".png";
+
+			BuildAtlas(filePath, MainTexFrames);
+			foreach(var layer in frameLayers)
+			{
+				if (layer.Key != "")
+				{
+					string name = layer.Key.TrimStart('@');
+					string path = basePath + name + ".png";
+					BuildAtlas(path, layer.Value);
+				}
+			}
         }
 
         protected override bool OnUpdate() {
@@ -45,18 +65,12 @@ namespace AsepriteImporter.Importers {
             return false;
         }
 
-        private void BuildAtlas(string acePath) {
-            fileName = Path.GetFileNameWithoutExtension(acePath);
-            directoryName = Path.GetDirectoryName(acePath) + "/" + fileName;
-            if (!AssetDatabase.IsValidFolder(directoryName)) {
-                AssetDatabase.CreateFolder(Path.GetDirectoryName(acePath), fileName);
-            }
-
-            filePath = directoryName + "/" + fileName + ".png";
-
+        private void BuildAtlas(string path, Texture2D[] frames) {
+           
             var atlas = GenerateAtlas(frames);
             try {
-                File.WriteAllBytes(filePath, atlas.EncodeToPNG());
+                File.WriteAllBytes(path, atlas.EncodeToPNG());
+				
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
             } catch (Exception e) {
@@ -123,7 +137,45 @@ namespace AsepriteImporter.Importers {
         }
 
         private bool GenerateSprites() {
-            TextureImporter importer = AssetImporter.GetAtPath(filePath) as TextureImporter;
+            foreach (var layer in frameLayers)
+			{
+				if (layer.Key == "")
+					continue;
+
+				string name = layer.Key.TrimStart('@');
+				string path = basePath + name + ".png";
+				TextureImporter secondaryimporter = AssetImporter.GetAtPath(path) as TextureImporter;
+				if (secondaryimporter == null)
+					continue;
+				
+				secondaryimporter.mipmapEnabled = false;
+				secondaryimporter.filterMode = FilterMode.Point;
+				secondaryimporter.textureCompression = TextureImporterCompression.Uncompressed;
+				secondaryimporter.npotScale = TextureImporterNPOTScale.None;
+
+				EditorUtility.SetDirty(secondaryimporter);
+				try
+				{
+					secondaryimporter.SaveAndReimport();
+				}
+				catch (Exception e)
+				{
+					Debug.LogWarning("There was a problem with generating sprite file: " + e);
+				}
+
+				AssetDatabase.Refresh();
+				AssetDatabase.SaveAssets();
+
+				var texAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+
+				secondaryAtlases.Add(new SecondarySpriteTexture()
+				{
+					name = name,
+					texture = texAsset
+				});
+			}
+
+			TextureImporter importer = AssetImporter.GetAtPath(filePath) as TextureImporter;
             if (importer == null) {
                 return false;
             }
@@ -132,13 +184,17 @@ namespace AsepriteImporter.Importers {
             importer.spritePixelsPerUnit = Settings.pixelsPerUnit;
             importer.mipmapEnabled = false;
             importer.filterMode = FilterMode.Point;
+			importer.npotScale = TextureImporterNPOTScale.None;
 
-            var metaList = CreateMetaData(fileName);
+
+			var metaList = CreateMetaData(fileName);
             var oldProperties = AseSpritePostProcess.GetPhysicsShapeProperties(importer, metaList);
 
             importer.spritesheet = metaList.ToArray();
             importer.textureCompression = TextureImporterCompression.Uncompressed;
             importer.spriteImportMode = SpriteImportMode.Multiple;
+			importer.secondarySpriteTextures = secondaryAtlases.ToArray();
+
 
             EditorUtility.SetDirty(importer);
             try {
@@ -160,7 +216,8 @@ namespace AsepriteImporter.Importers {
             var index = 0;
             var height = rows * (size.y + padding * 2);
             var done = false;
-            var count10 = frames.Length >= 100 ? 3 : (frames.Length >= 10 ? 2 : 1);
+			var frames = MainTexFrames;
+			var count10 = frames.Length >= 100 ? 3 : (frames.Length >= 10 ? 2 : 1);
 
             for (var row = 0; row < rows; row++) {
                 for (var col = 0; col < cols; col++) {

@@ -23,7 +23,7 @@ namespace AsepriteImporter {
         {
             size = new Vector2Int(AsepriteFile.Header.Width, AsepriteFile.Header.Height);
 
-            Texture2D frame = AsepriteFile.GetFrames()[0];
+            Texture2D frame = AsepriteFile.GetFrames()[""][0];
             BuildAtlas(AssetPath, frame);
         }
 

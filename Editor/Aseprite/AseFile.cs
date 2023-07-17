@@ -17,6 +17,7 @@ namespace Aseprite
     {
         public Header Header { get; private set; }
         public List<Frame> Frames { get; private set; }
+		public List<LayerChunk> Layers { get; private set; } 
 
         private Dictionary<Type, Chunk> chunkCache = new Dictionary<Type, Chunk>();
 
@@ -27,11 +28,14 @@ namespace Aseprite
 
             Header = new Header(header);
             Frames = new List<Frame>();
+			Layers = new List<LayerChunk>();
 
             while (reader.BaseStream.Position < reader.BaseStream.Length)
             {
                 Frames.Add(new Frame(this, reader));
             }
+
+			Layers = GetChunks<LayerChunk>();
         }
 
 
@@ -68,20 +72,35 @@ namespace Aseprite
             return (T)chunkCache[typeof(T)];
         }
 
-        public Texture2D[] GetFrames()
+        public Dictionary<string, Texture2D[]> GetFrames()
         {
-            List<Texture2D> frames = new List<Texture2D>();
+			List<string> flatLayers = new() { string.Empty }; //Empty string represents the main texture
 
-            for (int i = 0; i < Frames.Count; i++)
-            {
-                frames.Add(GetFrame(i));
-            }
+			foreach(var layer in Layers)
+			{
+				if (layer.LayerName.StartsWith(MetaData.MetaDataChar) && !MetaData.IsMetaLayer(layer.LayerName))
+				{
+					flatLayers.Add(layer.LayerName);
+				}
+			}
 
-            return frames.ToArray();
+			Dictionary<string, Texture2D[]> allFrames = new();
+
+			foreach (var layer in flatLayers)
+			{
+				List<Texture2D> frames = new();
+				for (int i = 0; i < Frames.Count; i++)
+				{
+					frames.Add(GetFrame(i, layer));
+				}
+				allFrames[layer] = frames.ToArray();
+			}
+
+            return allFrames;
         }
 
-
-        public Texture2D[] GetLayersAsFrames()
+		//Unused?
+		public Texture2D[] GetLayersAsFrames()
         {
             List<Texture2D> frames = new List<Texture2D>();
             List<LayerChunk> layers = GetChunks<LayerChunk>();
@@ -121,8 +140,6 @@ namespace Aseprite
 
         public List<Texture2D> GetLayerTexture(int layerIndex, LayerChunk layer)
         {
-
-            List<LayerChunk> layers = GetChunks<LayerChunk>();
             List<Texture2D> textures = new List<Texture2D>();
 
             for (int frameIndex = 0; frameIndex < Frames.Count; frameIndex++)
@@ -150,7 +167,7 @@ namespace Aseprite
                         parent = GetParentLayer(parent);
                     }
 
-                    if (visibility == false || layer.LayerType == LayerType.Group)
+                    if (visibility == false || layer.LayerType == LayerType.Group) //???Do this group check at start
                         continue;
 
                     textures.Add(GetTextureFromCel(cels[i]));
@@ -160,23 +177,31 @@ namespace Aseprite
             return textures;
         }
 
-        public Texture2D GetFrame(int index)
+        public Texture2D GetFrame(int index, string layerName = null)
         {
             Frame frame = Frames[index];
 
             Texture2D texture = Texture2DUtil.CreateTransparentTexture(Header.Width, Header.Height);
 
             
-            List<LayerChunk> layers = GetChunks<LayerChunk>();
             List<CelChunk> cels = frame.GetChunks<CelChunk>();
 
             cels.Sort((ca, cb) => ca.LayerIndex.CompareTo(cb.LayerIndex));
 
             for (int i = 0; i < cels.Count; i++)
             {
-                LayerChunk layer = layers[cels[i].LayerIndex];
-                if (layer.LayerName.StartsWith("@")) //ignore metadata layer
-                    continue;
+                LayerChunk layer = Layers[cels[i].LayerIndex];
+
+				if (!string.IsNullOrEmpty(layerName))
+				{
+					if (layer.LayerName != layerName)
+						continue; //Skip to next layer if layername was specified and this isn't it
+				}
+				else if (layer.LayerName.StartsWith(MetaData.MetaDataChar))
+				{
+					continue; //Skip to next layer if no layername specified (main tex), and this layer is for a meta or secondary tex
+				}
+
 
                 LayerBlendMode blendMode = layer.BlendMode;
                 float opacity = Mathf.Min(layer.Opacity / 255f, cels[i].Opacity / 255f);
@@ -299,8 +324,10 @@ namespace Aseprite
                 {
                     int layerIndex = cels[i].LayerIndex;
                     LayerChunk layer = layers[layerIndex];
-                    if (!layer.LayerName.StartsWith(MetaData.MetaDataChar)) //read only metadata layer
+                    if (!MetaData.IsMetaLayer(layer.LayerName)) //read only metadata layers
                         continue;
+
+					//Do a switch for whatever other metadata layers need to be supported
 
                     if (!metadatas.ContainsKey(layerIndex))
                         metadatas[layerIndex] = new MetaData(layer.LayerName);
@@ -338,29 +365,30 @@ namespace Aseprite
             return metadatas.Values.ToArray();
         }
 
-        public Texture2D GetTextureAtlas()
-        {
-            Texture2D[] frames = this.GetFrames();
-
-            Texture2D atlas = Texture2DUtil.CreateTransparentTexture(Header.Width * frames.Length, Header.Height);
-            List<Rect> spriteRects = new List<Rect>();
-
-            int col = 0;
-            int row = 0;
-
-            foreach (Texture2D frame in frames)
-            {
-                Rect spriteRect = new Rect(col * Header.Width, atlas.height - ((row + 1) * Header.Height), Header.Width, Header.Height);
-                atlas.SetPixels((int)spriteRect.x, (int)spriteRect.y, (int)spriteRect.width, (int)spriteRect.height, frame.GetPixels());
-                atlas.Apply();
-
-                spriteRects.Add(spriteRect);
-
-                col++;
-            }
-
-            return atlas;
-        }
+		//Unused
+        //public Texture2D GetTextureAtlas()
+        //{
+        //    Texture2D[] frames = this.GetFrames();
+		//
+        //    Texture2D atlas = Texture2DUtil.CreateTransparentTexture(Header.Width * frames.Length, Header.Height);
+        //    List<Rect> spriteRects = new List<Rect>();
+		//
+        //    int col = 0;
+        //    int row = 0;
+		//
+        //    foreach (Texture2D frame in frames)
+        //    {
+        //        Rect spriteRect = new Rect(col * Header.Width, atlas.height - ((row + 1) * Header.Height), Header.Width, Header.Height);
+        //        atlas.SetPixels((int)spriteRect.x, (int)spriteRect.y, (int)spriteRect.width, (int)spriteRect.height, frame.GetPixels());
+        //        atlas.Apply();
+		//
+        //        spriteRects.Add(spriteRect);
+		//
+        //        col++;
+        //    }
+		//
+        //    return atlas;
+        //}
     }
 
 }

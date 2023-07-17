@@ -10,7 +10,22 @@ namespace Aseprite
     {
         static public string MetaDataChar = "@";
 
-        public MetaDataType Type { get; private set; }
+		static string[] MetaKeywords = new string[]
+		{
+			"@transform",
+		};
+
+		static public bool IsMetaLayer(string layerName)
+		{
+			foreach(var keyword in MetaKeywords)
+			{
+				if (layerName.StartsWith(keyword))
+					return true;
+			}
+			return false;
+		}
+
+		public MetaDataType Type { get; private set; }
         //Average position per frames
         public Dictionary<int, Vector2> Transforms { get; private set; }
         public List<string> Args { get; private set; }
